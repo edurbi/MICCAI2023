@@ -83,13 +83,13 @@ def main():
     logging.info(str(args))
     train_set = Dataset_3D(transforms_xr=args.test_transforms_xr,transforms=args.train_transforms, root=args.datapath,type=0)
     val_set = Dataset_3D(transforms_xr=args.test_transforms_xr,transforms=args.test_transforms,root=args.datapath,type=2)
-    train_loader = MultiEpochsDataLoader(
+    train_loader = torch.utils.data.DataLoader(
         dataset=train_set,
         batch_size=args.batch_size,
         num_workers=2,
         shuffle=True,
         pin_memory=True)
-    val_loader = MultiEpochsDataLoader(
+    val_loader = torch.utils.data.DataLoader(
         dataset=val_set,
         batch_size=args.batch_size,
         shuffle=True,
