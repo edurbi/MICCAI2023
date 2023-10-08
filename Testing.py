@@ -28,33 +28,27 @@ import torchio as tio
 
 
 from model import Model
-from data.transforms import *
-from data.data_utils import init_fn
-from utils import Parser,criterions
-from utils.parser import setup
 from Stats import AUCRecorder
 from Dataset_3D import Dataset_3D
-from utils.lr_scheduler import LR_Scheduler, record_loss, MultiEpochsDataLoader
-from predict import AverageMeter, test_softmax
 from Stats import evaluate
 
 
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('-batch_size', '--batch_size', default=6, type=int, help='Batch size')
+parser.add_argument('-batch_size', '--batch_size', default=4, type=int, help='Batch size')
 parser.add_argument('--datapath', default=None, type=str)
 parser.add_argument('--savepath', default=None, type=str)
 parser.add_argument('--resume', default=None, type=str)
 parser.add_argument('--lr', default=1e-5, type=float)
 parser.add_argument('--weight_decay', default=1e-4, type=float)
-parser.add_argument('--num_epochs', default=40, type=int)
+parser.add_argument('--gpu', default="0", type=str)
 path = os.path.dirname(__file__)
+args = parser.parse_args()
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 os.environ['TORCH_USE_CUDA_DSA'] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
-args = parser.parse_args()
-setup(args,'training')
 args.train_transforms = 'Compose([tio.transforms.CropOrPad((256,256,256)),T.ConvertImageDtype(torch.float32)])'
 args.test_transforms = 'Compose([tio.transforms.CropOrPad((256,256,256)),T.ConvertImageDtype(torch.float32)])'
 args.train_transforms_xr ='Compose([T.Pad((600,600)),T.RandomCrop((2048,2048)),T.RandomRotation(10),PILToTensor(),T.ConvertImageDtype(torch.float32)])'
@@ -72,7 +66,7 @@ def main():
 
     ##########setting models
     model = Model()
-    model = torch.nn.DataParallel(model).cuda()
+    model = model.cuda()
 
     ##########Setting learning schedule and optimizer
     train_params = [{'params': model.parameters(), 'lr': args.lr, 'weight_decay':args.weight_decay}]
@@ -81,18 +75,19 @@ def main():
     val_stats=evaluate()
     logging.info(str(args))
     val_set = Dataset_3D(transforms_xr=args.test_transforms_xr,transforms=args.test_transforms,root=args.datapath,type=2)
-    val_loader = MultiEpochsDataLoader(
+    val_loader = torch.utils.data.DataLoader(
         dataset=val_set,
         batch_size=args.batch_size,
-        shuffle=True,
-        pin_memory=True,
-        num_workers=2)
+        num_workers=1,
+        shuffle=False,
+        pin_memory=True)
 
 
     if args.resume is not None:
         checkpoint = torch.load(args.resume)
         logging.info('best epoch: {}'.format(checkpoint['epoch']))
         model.load_state_dict(checkpoint['state_dict'])
+            
         optimizer.load_state_dict(checkpoint['optim_dict'])
         log_file = open(os.path.join(ckpts, 'logging.txt'), 'a')
         val_stats.set_best_auc(checkpoint['best'])
@@ -110,21 +105,21 @@ def main():
         res =None
         true=None
         model.eval()
-        model.module.is_training = False
+        model.is_training = False
         for i in range(len(val_loader)):
             try:
-                data = next(val_loader)
+                data = next(val_iter)
             except:
                 val_iter = iter(val_loader)
                 data = next(val_iter)
-            x, y, name,session,X_1,X_2,age,gender,exists= data
-            age = age.cuda(non_blocking=True)
-            gender = gender.cuda(non_blocking=True)
+            x, y, session, X_1, X_2 = data  # age, gender, exists = data
+            # age = age.cuda(non_blocking=True)
+            # gender = gender.cuda(non_blocking=True)
             x = x.cuda(non_blocking=True)
             y = y.cuda(non_blocking=True)
-            X_1, X_2 = X_1.cuda(non_blocking=True),X_2.cuda(non_blocking=True)
-
-            fuse_pred = model(x, y,X_1,X_2,age,gender,False,exists)
+            X_1, X_2 = X_1.cuda(non_blocking=True).requires_grad_(), X_2.cuda(non_blocking=True)
+            fuse_pred = model(x, len(y), X_1, X_2, False)
+            print(y)
             if i ==0:
                 res=np.array(fuse_pred.cpu().detach())
             else:
@@ -138,12 +133,13 @@ def main():
             val_stats.update(fuse_pred.cpu().detach(), y.cpu().to(torch.uint8), loss.item())
 
             msg = 'Val Iter {}/{}, Acc {:.4f}, Auc {:.4f}'.format((i + 1), len(val_loader),val_stats.total_acc(),val_stats.auc_score())
-
+            print(msg)
             logging.info(msg)
         metrics = val_stats.confusion_matrix()
         msg = "Val Average Loss {:.4f}," \
               " Total Acc {:.4f},Total Auc {:.4f},True Positive {:.4f},False Positive {:.4f},False Negative {:.4f},True Negative{:.4f}\n".format(val_stats.avg_loss(),val_stats.total_acc(),val_stats.auc_score(), metrics[0][0],metrics[0][1],metrics[1][0],metrics[1][1])
         print(msg)
+        log_file.write(msg)
         skplt.metrics.plot_roc(true, res)
         plt.show()
         df_cm = pd.DataFrame(metrics, index=["Positive","Negative"],columns=["Positive","Negative"])

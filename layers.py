@@ -3,7 +3,6 @@ import torch.nn as nn
 
 
 
-
 class conv3d_norm(nn.Module):
     def __init__(self, in_ch, out_ch, k_size=3, stride=1, padding=1, pad_type='zeros', norm='in'):
         super(conv3d_norm, self).__init__()
@@ -33,6 +32,9 @@ class conv2d_norm(nn.Module):
         x = self.conv(x)
         x = self.activation(x)
         return x
+
+
+
 
 
 
